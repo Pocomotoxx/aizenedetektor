@@ -15,6 +15,7 @@ const humanScore = document.querySelector('#human-score');
 const humanVerdict = document.querySelector('#human-verdict');
 const humanMeter = document.querySelector('#human-meter');
 const residualDiagnostics = document.querySelector('#residual-diagnostics');
+const segmentDiagnostics = document.querySelector('#segment-diagnostics');
 const humanReference = [];
 
 for (const event of ['dragenter', 'dragover']) dropzone.addEventListener(event, (e) => { e.preventDefault(); dropzone.classList.add('active'); });
@@ -62,6 +63,15 @@ function render(analysis, filename) {
   evidence.innerHTML = Object.entries(analysis.evidence).map(([label, value]) => `<div class="evidence-row"><span>${label}</span><div class="bar"><i style="width:${Math.round(value * 100)}%"></i></div><b>${Math.round(value * 100)}%</b></div>`).join('');
   results.querySelector('.warnings')?.remove();
   if (analysis.warnings.length) evidence.insertAdjacentHTML('afterend', `<p class="warnings">${analysis.warnings.join(' ')}</p>`);
+  segmentDiagnostics.innerHTML = analysis.segments ? `
+    <h3>Szegmensenkénti bizonytalanság <small>kutatási jelzés</small></h3>
+    <div class="residual-grid">
+      <div><span>Medián AI-kockázat</span><b>${Math.round(analysis.segments.median * 100)}%</b></div>
+      <div><span>Középső 50% tartománya</span><b>${Math.round(analysis.segments.low * 100)}–${Math.round(analysis.segments.high * 100)}%</b></div>
+      <div><span>Elemzett szegmensek</span><b>${analysis.segments.analyzed}</b></div>
+      <div><span>Kihagyott, halk szegmensek</span><b>${analysis.segments.skipped}</b></div>
+    </div>
+    <p>A pontszámok szórása a dalszintű érték bizonytalanságát jelzi, nem külön AI-bizonyíték.</p>` : '<h3>Szegmensenkénti bizonytalanság</h3><p>A fájl túl rövid a több szegmens közötti összevetéshez.</p>';
   residualDiagnostics.innerHTML = `
     <h3>Maradványdiagnosztika <small>kutatási jelzés</small></h3>
     <div class="residual-grid">
@@ -71,6 +81,11 @@ function render(analysis, filename) {
       <div><span>Csúcsok időbeli fennmaradása</span><b>${Math.round(analysis.residual.peakPersistence * 100)}%</b></div>
     </div>
     <p>Ez a kevert hang HPSS-alapú maradványprofilja. Nem stem-döntés és nem része az AI-kockázati pontszámnak.</p>`;
+  residualDiagnostics.insertAdjacentHTML('beforeend', `<div class="residual-grid research-grid">
+    <div><span>Strukturális önhasonlóság</span><b>${Math.round(analysis.structure.recurrence * 100)}%</b></div>
+    <div><span>DFA Hurst-exponens</span><b>${analysis.multifractal.supported ? analysis.multifractal.hurst.toFixed(2) : 'kevés adat'}</b></div>
+    <div><span>MFDFA spektrumszélesség</span><b>${analysis.multifractal.supported ? analysis.multifractal.spectrumWidth.toFixed(2) : 'kevés adat'}</b></div>
+  </div><p>Az önhasonlóság és az MFDFA csak műfajazonos referenciával értelmezhető kutatási jellemző; nincs beleszámítva az AI-pontszámba.</p>`);
   renderHumanComparison(humanComparison);
   results.hidden = false;
 }
