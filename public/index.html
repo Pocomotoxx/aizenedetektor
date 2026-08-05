@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="hu">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Zene Detektor</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <main>
+    <header><p class="eyebrow">HELYI · ÁTLÁTHATÓ · KÍSÉRLETI</p><h1>AI Zene Detektor</h1><p class="intro">Keressünk a zenében olyan spektrális mintázatokat, amelyek generatív audióra utalhatnak.</p></header>
+    <section class="card"><label id="dropzone" for="audio-file"><span class="upload-icon">↥</span><strong>Húzd ide a hangfájlt</strong><span>vagy válaszd ki az eszközödről</span><em>MP3 · WAV · M4A · OGG · FLAC</em></label><input id="audio-file" type="file" accept="audio/*" hidden><p id="status" role="status">Az elemzés teljes egészében a böngésződben történik.</p></section>
+    <section id="results" class="card result" hidden><div class="result-top"><div><p class="eyebrow">AI-EREDT PONTSZÁM</p><div id="score">—</div><p id="verdict">—</p></div><div id="meter" class="meter" aria-label="AI eredet pontszám"><span>Valószínűleg emberi</span><div><i></i></div><span>Valószínűleg AI</span></div></div><p id="metadata" class="metadata"></p><div id="evidence" class="evidence"></div><aside><strong>Fontos:</strong> ez egy kutatási jellegű, heurisztikus előszűrő, nem bizonyíték. Új generátorok, mastering, újrakódolás vagy rövid részlet torzíthatja az eredményt.</aside></section>
+    <section class="how"><h2>Mit vizsgál?</h2><p>A rendszer több rövid ablak átlagolt frekvenciaspektrumában keres ismétlődő csúcsokat, periodikus struktúrát és magasfrekvenciás rendellenességeket. Ezek a neurális vokóderek felskálázási folyamataiban előfordulhatnak, de önmagukban nem igazolják az AI-használatot.</p></section>
+  </main><script type="module" src="app.js"></script>
+</body></html>
