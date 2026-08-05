@@ -1,4 +1,4 @@
-import { analyzePcm, compareToHumanReference } from './analyzer.js';
+import { analyzePcm, buildEvidenceTriage, compareToHumanReference } from './analyzer.js';
 
 const input = document.querySelector('#audio-file');
 const dropzone = document.querySelector('#dropzone');
@@ -16,7 +16,10 @@ const humanVerdict = document.querySelector('#human-verdict');
 const humanMeter = document.querySelector('#human-meter');
 const residualDiagnostics = document.querySelector('#residual-diagnostics');
 const segmentDiagnostics = document.querySelector('#segment-diagnostics');
+const auditDiagnostics = document.querySelector('#audit-diagnostics');
+const exportAudit = document.querySelector('#export-audit');
 const humanReference = [];
+let latestAudit = null;
 
 for (const event of ['dragenter', 'dragover']) dropzone.addEventListener(event, (e) => { e.preventDefault(); dropzone.classList.add('active'); });
 for (const event of ['dragleave', 'drop']) dropzone.addEventListener(event, (e) => { e.preventDefault(); dropzone.classList.remove('active'); });
@@ -31,11 +34,13 @@ async function handleFile(file) {
   setStatus(`„${file.name}” dekódolása és spektrális elemzése…`);
   try {
     const context = new AudioContext();
-    const buffer = await context.decodeAudioData(await file.arrayBuffer());
+    const bytes = await file.arrayBuffer();
+    const fileHash = await sha256(bytes);
+    const buffer = await context.decodeAudioData(bytes);
     const data = mixToMono(buffer);
     const analysis = analyzePcm(data, buffer.sampleRate);
     context.close();
-    render(analysis, file.name);
+    render(analysis, file, fileHash);
     setStatus('Kész. A hangfájl nem hagyta el az eszközödet.');
   } catch (error) {
     setStatus(error.message || 'A fájl dekódolása nem sikerült. Próbálj WAV vagy MP3 formátumot.', true);
@@ -51,11 +56,13 @@ function mixToMono(buffer) {
   return mono;
 }
 
-function render(analysis, filename) {
+function render(analysis, file, fileHash) {
+  const filename = file.name;
   const percent = Math.round(analysis.probability * 100);
   score.textContent = `${percent}%`;
   meter.style.setProperty('--score', `${percent}%`);
   const humanComparison = compareToHumanReference(analysis.humanProfile, humanReference);
+  const triage = buildEvidenceTriage(analysis, humanComparison);
   const uncertain = analysis.confidence < 0.45 || (percent > 40 && percent < 60) || (humanComparison && (!humanComparison.calibrated || (percent >= 60) === (humanComparison.alignment >= .55)));
   verdict.textContent = uncertain ? 'Bizonytalan - felülvizsgálat javasolt' : percent >= 60 ? 'AI-artefaktumok valószínűek' : 'Kevés AI-artefaktum észlelhető';
   verdict.dataset.tone = uncertain ? 'caution' : percent >= 60 ? 'ai' : 'human';
@@ -63,6 +70,26 @@ function render(analysis, filename) {
   evidence.innerHTML = Object.entries(analysis.evidence).map(([label, value]) => `<div class="evidence-row"><span>${label}</span><div class="bar"><i style="width:${Math.round(value * 100)}%"></i></div><b>${Math.round(value * 100)}%</b></div>`).join('');
   results.querySelector('.warnings')?.remove();
   if (analysis.warnings.length) evidence.insertAdjacentHTML('afterend', `<p class="warnings">${analysis.warnings.join(' ')}</p>`);
+  const alternatives = [
+    file.type.includes('mpeg') || file.name.toLowerCase().endsWith('.mp3') ? 'veszteséges MP3-kódolás' : null,
+    file.type.includes('aac') || file.name.toLowerCase().endsWith('.m4a') ? 'veszteséges AAC-kódolás' : null,
+    analysis.sampleRate < 22050 ? 'alacsony mintavételi frekvencia' : null,
+    analysis.segments?.dispersion > 0.6 ? 'szegmensenként eltérő mastering vagy hangszerelés' : null,
+    'mastering, újrakódolás vagy forrás-szeparálási műtermék'
+  ].filter(Boolean);
+  auditDiagnostics.innerHTML = `<h3>Bizonyíték-triage <small>emberi felülvizsgálathoz</small></h3>
+    <p><strong>${triage.assessment}</strong></p>
+    <div class="residual-grid">${triage.layers.map((layer) => `<div><span>${layer.label}</span><b>${layer.status}</b></div>`).join('')}</div>
+    <p><strong>Alternatív magyarázatok:</strong> ${alternatives.join('; ')}.</p>
+    <p>Provenance/SynthID/C2PA és stemszintű eredet ebben a böngészős verzióban nincs ellenőrizve. Jogi vagy szerzői jogi következtetéshez szakértői felülvizsgálat szükséges.</p>`;
+  latestAudit = {
+    schemaVersion: '1.0', detector: { name: 'AI Zene Detektor', version: '0.2.0', mode: 'browser-local-triage' }, generatedAt: new Date().toISOString(),
+    file: { name: file.name, type: file.type || 'ismeretlen', size: file.size, lastModified: file.lastModified, sha256: fileHash },
+    analysis: { probability: analysis.probability, confidence: analysis.confidence, evidence: analysis.evidence, warnings: analysis.warnings, segments: analysis.segments, residual: analysis.residual },
+    triage, alternativeExplanations: alternatives,
+    limitations: ['A provenance, a szolgáltatóspecifikus vízjelek és a stemszintű eredet nincs ellenőrizve.', 'Az eredmény kutatási jelzés, nem jogi bizonyíték.']
+  };
+  exportAudit.hidden = false;
   segmentDiagnostics.innerHTML = analysis.segments ? `
     <h3>Szegmensenkénti bizonytalanság <small>kutatási jelzés</small></h3>
     <div class="residual-grid">
@@ -120,3 +147,13 @@ function renderHumanComparison(comparison) {
 
 function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`; }
 function setStatus(text, error = false) { status.textContent = text; status.classList.toggle('error', error); }
+async function sha256(bytes) {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+exportAudit.addEventListener('click', () => {
+  if (!latestAudit) return;
+  const blob = new Blob([JSON.stringify(latestAudit, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob); const link = document.createElement('a');
+  link.href = url; link.download = `${latestAudit.file.name}.audit.json`; link.click(); URL.revokeObjectURL(url);
+});
