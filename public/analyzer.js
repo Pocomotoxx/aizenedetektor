@@ -315,6 +315,29 @@ export function compareToHumanReference(profile, references) {
   return { alignment, outlier: 1 - alignment, referenceCount: references.length, calibrated: references.length >= 5 };
 }
 
+// The triage deliberately does not turn correlated measurements into proof.
+// It records what is available and reserves provenance/component claims for
+// dedicated tools or a human reviewer.
+export function buildEvidenceTriage(analysis, humanComparison) {
+  const technicalSignal = analysis.probability >= 0.6;
+  const stableAcrossSegments = Boolean(analysis.segments && analysis.segments.dispersion <= 0.6);
+  const referenceDivergence = Boolean(humanComparison?.calibrated && humanComparison.alignment < 0.55);
+  const layers = [
+    { id: 'mix-forensics', label: 'Mixszintű Fourier- és residual-jel', status: technicalSignal ? 'jelzett' : 'nem jelzett', independent: true },
+    { id: 'segment-stability', label: 'Időbeli szegmensstabilitás', status: analysis.segments ? (stableAcrossSegments ? 'stabil' : 'szórt') : 'nem értékelhető', independent: false },
+    { id: 'human-reference', label: 'Emberi referenciailleszkedés', status: humanComparison ? (referenceDivergence ? 'eltérő' : 'illeszkedő') : 'nincs referencia', independent: true },
+    { id: 'provenance', label: 'Provenance / vízjel', status: 'nem ellenőrzött', independent: true },
+    { id: 'components', label: 'Stem- és komponenselemzés', status: 'nem ellenőrzött', independent: true }
+  ];
+  const independentSignals = [technicalSignal, referenceDivergence].filter(Boolean).length;
+  const assessment = technicalSignal && referenceDivergence
+    ? 'Többrétegű vizsgálat javasolt'
+    : technicalSignal
+      ? 'Technikai jelzés - önmagában nem bizonyíték'
+      : 'Nincs erős technikai jelzés';
+  return { assessment, technicalSignal, stableAcrossSegments, referenceDivergence, independentSignals, layers };
+}
+
 // Roadmap step 4: score every non-silent segment, then report the track-level
 // median with a spread interval instead of one number from one arbitrary window.
 // Loud-only gating keeps silence and fade-outs from dragging the median around.

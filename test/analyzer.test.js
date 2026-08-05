@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzePcm, clamp, compareToHumanReference, magnitudeSpectrum, multifractalDiagnostics } from '../public/analyzer.js';
+import { analyzePcm, buildEvidenceTriage, clamp, compareToHumanReference, magnitudeSpectrum, multifractalDiagnostics } from '../public/analyzer.js';
 
 test('clamp confines a score to the expected range', () => {
   assert.equal(clamp(-2), 0); assert.equal(clamp(2), 1); assert.equal(clamp(.4), .4);
@@ -27,4 +27,10 @@ test('human-reference comparison rewards a matching profile and flags a distant 
   const references = [[.2, .3, .4, .6], [.21, .31, .39, .59], [.19, .29, .41, .61], [.2, .3, .4, .6], [.2, .3, .4, .6]];
   assert.ok(compareToHumanReference([.2, .3, .4, .6], references).alignment > .9);
   assert.ok(compareToHumanReference([.9, .9, .9, .1], references).outlier > .9);
+});
+test('evidence triage keeps unavailable layers explicitly unresolved', () => {
+  const analysis = { probability: .7, segments: { dispersion: .1 } };
+  const triage = buildEvidenceTriage(analysis, { calibrated: true, alignment: .3 });
+  assert.equal(triage.assessment, 'Többrétegű vizsgálat javasolt');
+  assert.equal(triage.layers.find((layer) => layer.id === 'provenance').status, 'nem ellenőrzött');
 });

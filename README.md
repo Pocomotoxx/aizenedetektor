@@ -21,6 +21,10 @@ A pontszám egy transzparens, **nem betanított** heurisztika. A spektrális cs�
 
 A két pontszám nem olvad össze automatikusan. Ellentmondás, kevés referencia vagy gyenge hangminőség esetén az alkalmazás emberi felülvizsgálatot javasol. A referenciafájlok a böngészőben maradnak; legalább öt, a vizsgált zenéhez műfajban és produkciós környezetben hasonló emberi mű ajánlott.
 
+## Bizonyíték-triage és auditjegyzék
+
+Minden elemzés egy helyben letölthető JSON auditjegyzéket is készít: SHA-256 fájlhash, fájlparaméterek, detektorverzió, mérési jellemzők, figyelmeztetések, bizonyítékrétegek és lehetséges alternatív magyarázatok. A provenance/SynthID/C2PA és a stemszintű eredet ebben a böngészős MVP-ben **nem ellenőrzött**, ezért a rendszer ezeket nem állíthatja pozitívnak vagy negatívnak. A kimenet célja a szakértői felülvizsgálat előkészítése, nem jogi bizonyítás.
+
 ## Maradványdiagnosztika
 
 Az alkalmazás kutatási jelleggel kimutatja a kevert hang HPSS-alapú harmonikus/perkusszív arányát, spektrális fluxát, maradvány-sávszélességét és a keskeny spektrális csúcsok időbeli fennmaradását. Ezek nem AI-bizonyítékok, nem stem-szintű ítéletek, és nem részei az AI-artefaktum kockázati pontszámnak.
