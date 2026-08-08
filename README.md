@@ -2,6 +2,8 @@
 
 Helyben futó, böngészős MVP kétoldalú zenei forenzikához. A hanganyag nem töltődik fel: a dekódolás és a spektrális elemzés a felhasználó böngészőjében történik.
 
+A számításigényes elemzés külön Web Workerben fut, ezért a felület a hosszabb fájlok feldolgozása közben is reszponzív marad. A kimutatott eredményhez vizuális, kijelző célú spektrogram is készül; ez nem része a döntési pontszámnak.
+
 ## Indítás
 
 ```bash
@@ -23,13 +25,25 @@ A két pontszám nem olvad össze automatikusan. Ellentmondás, kevés referenci
 
 ## Bizonyíték-triage és auditjegyzék
 
-Minden elemzés egy helyben letölthető JSON auditjegyzéket is készít: SHA-256 fájlhash, fájlparaméterek, detektorverzió, mérési jellemzők, figyelmeztetések, bizonyítékrétegek és lehetséges alternatív magyarázatok. A provenance/SynthID/C2PA és a stemszintű eredet ebben a böngészős MVP-ben **nem ellenőrzött**, ezért a rendszer ezeket nem állíthatja pozitívnak vagy negatívnak. A kimenet célja a szakértői felülvizsgálat előkészítése, nem jogi bizonyítás.
+Minden elemzés egy helyben letölthető JSON auditjegyzéket is készít: SHA-256 fájlhash, fájlparaméterek, detektorverzió, mérési jellemzők, figyelmeztetések, bizonyítékrétegek és lehetséges alternatív magyarázatok. A C2PA-kompatibilis, olvasható manifestet a felület helyben ellenőrzi. A hiánya nem ellenbizonyíték: a fájlformátum vagy a böngésző is korlátozhatja az ellenőrzést. SynthID és stemszintű eredet továbbra sem ellenőrzött, ezért a rendszer ezeket nem állíthatja pozitívnak vagy negatívnak. A kimenet célja a szakértői felülvizsgálat előkészítése, nem jogi bizonyítás.
+
+Az alkalmazás a gyakori ID3/RIFF-környéki konténeradatokban helyi szövegkereséssel jelzi a `made with suno` feliratot, UUID-ket és ISO-időbélyegeket. Ez **módosítható metadata**, nem kriptográfiai eredetigazolás és nem rejtett akusztikus vízjel. Emellett a 16,0 / 16,6 / 16,8 kHz körüli relatív, keskenysávú kiemeléseket kutatási jelzőként naplózza. Ezeket a rendszer generátori, codec- vagy mastering-artefaktumként kezeli, és nem számítja AI-pontszámba.
+
+## Effektprofil-adatgyűjtés
+
+A felület helyben tárolható, exportálható rekordokat készít későbbi plugin-/effektprofil-kutatáshoz. Egy rekord a fájl SHA-256 hash-ét, a felhasználó címkéit (forrás, effektcsalád, plugin/modell, tesztjel, beállításazonosító) és alapvető dinamikai/spektrális jellemzőket tartalmaz; magát a hangfájlt nem. A tanításhoz a hash alapján párosítsd a rekordokat a jogtisztán megőrzött eredeti hanganyaggal. Csak kontrollált, ismert forrású teszteket címkézz pozitív példaként - egy kész zenei részlet nem alkalmas biztos pluginazonosításra.
 
 ## Maradványdiagnosztika
 
 Az alkalmazás kutatási jelleggel kimutatja a kevert hang HPSS-alapú harmonikus/perkusszív arányát, spektrális fluxát, maradvány-sávszélességét és a keskeny spektrális csúcsok időbeli fennmaradását. Ezek nem AI-bizonyítékok, nem stem-szintű ítéletek, és nem részei az AI-artefaktum kockázati pontszámnak.
 
-A hibrid, AI-stem-szintű detektálás tervezett szerveroldali architektúrája: [hybrid-stem-roadmap.md](docs/hybrid-stem-roadmap.md).
+A hibrid, AI-stem-szintű detektálás tervezett szerveroldali architektúrája: [hybrid-stem-roadmap.md](docs/hybrid-stem-roadmap.md). A felület kísérleti 6+1 stem-zajréteget is fogad: `vocals`, `drums`, `bass`, `guitar`, `piano`, `other` és külön `residual/noise` stem. Ezekben a spektrális laposságot, magasfrekvenciás arányt és egy összesített zajindexet méri a mixhez képest. Ez csak bizonyítékréteg; a szeparátor saját műterméke ugyanilyen jelet adhat.
+
+A későbbi lokális szeparátor-szolgáltatás job-, cancel-, progress- és metaadatszerződése: [stem-service-contract.md](docs/stem-service-contract.md). A hat fő stem feltöltésekor a residualt a kliens is képezheti az illesztett mix és a hat stem különbségeként.
+
+## ONNX és TypeScript alap
+
+Az alkalmazás Vite-alapú fejlesztői és build-folyamatot, valamint TypeScript-ellenőrzést használ. Opcionálisan betölthető egy ONNX-modell és a hozzá tartozó JSON-kontraktus; a kontraktus expliciten megadja a bemenet nevét, a kimenet nevét és a feature-sorrendet. Ez csak helyi következtetést futtat, nem ad automatikusan hiteles AI-minősítést: ahhoz verziózott modellkártya, tanítóadat-leírás, küszöb és külső validáció kell. Stem-szeparáció nem indul el kompatibilis, licencelt szeparációs modell és hang-előfeldolgozási kontraktus nélkül.
 
 ## Beépített kutatási tanulságok
 

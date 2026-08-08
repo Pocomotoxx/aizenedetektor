@@ -110,6 +110,36 @@ export function rawScore(evidence, weights = EVIDENCE_WEIGHTS, bias = EVIDENCE_B
   return clamp(Object.entries(weights).reduce((total, [label, weight]) => total + (evidence[label] ?? 0) * weight, bias));
 }
 
+// Container text is provenance evidence, not a cryptographic watermark: it can
+// be edited or removed. Scanning bounded head/tail ranges covers common ID3 and
+// RIFF metadata without retaining the user's audio in application state.
+export function inspectContainerMetadata(bytes) {
+  const data = new Uint8Array(bytes);
+  const head = data.slice(0, Math.min(data.length, 1024 * 1024));
+  const tail = data.length > head.length ? data.slice(Math.max(head.length, data.length - 128 * 1024)) : new Uint8Array();
+  const text = new TextDecoder('latin1').decode(head) + new TextDecoder('latin1').decode(tail);
+  const unique = (values) => [...new Set(values)].slice(0, 5);
+  return {
+    inspectedBytes: head.length + tail.length,
+    madeWithSuno: /made\s+with\s+suno/i.test(text),
+    uuids: unique([...text.matchAll(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi)].map((match) => match[0])),
+    timestamps: unique([...text.matchAll(/\b\d{4}-\d{2}-\d{2}[T ][0-2]\d:[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\b/g)].map((match) => match[0])),
+    limitation: 'A konténeradat módosítható; nem rejtett akusztikus vízjel.'
+  };
+}
+
+export function highFrequencyMarkers(averageSpectrum, hzPerBin, sampleRate) {
+  const targets = [16000, 16600, 16800];
+  return targets.map((frequency) => {
+    if (frequency + 400 >= sampleRate / 2) return { frequency, supported: false, prominenceDb: null, present: false };
+    const local = bandEnergy(averageSpectrum, hzPerBin, frequency - 75, frequency + 75);
+    const sides = [bandEnergy(averageSpectrum, hzPerBin, frequency - 400, frequency - 150), bandEnergy(averageSpectrum, hzPerBin, frequency + 150, frequency + 400)];
+    const baseline = mean(sides);
+    const prominenceDb = 20 * Math.log10((local + EPSILON) / (baseline + EPSILON));
+    return { frequency, supported: true, prominenceDb, present: prominenceDb >= 1.5 };
+  });
+}
+
 // A sample-rate independent residual profile. Log-spaced bands keep two files
 // comparable even when they were decoded at different rates, and the unit-sum
 // normalisation removes loudness so NMF factorises artefact shape, not level.
@@ -318,7 +348,7 @@ export function compareToHumanReference(profile, references) {
 // The triage deliberately does not turn correlated measurements into proof.
 // It records what is available and reserves provenance/component claims for
 // dedicated tools or a human reviewer.
-export function buildEvidenceTriage(analysis, humanComparison) {
+export function buildEvidenceTriage(analysis, humanComparison, provenance = null) {
   const technicalSignal = analysis.probability >= 0.6;
   const stableAcrossSegments = Boolean(analysis.segments && analysis.segments.dispersion <= 0.6);
   const referenceDivergence = Boolean(humanComparison?.calibrated && humanComparison.alignment < 0.55);
@@ -326,7 +356,7 @@ export function buildEvidenceTriage(analysis, humanComparison) {
     { id: 'mix-forensics', label: 'Mixszintű Fourier- és residual-jel', status: technicalSignal ? 'jelzett' : 'nem jelzett', independent: true },
     { id: 'segment-stability', label: 'Időbeli szegmensstabilitás', status: analysis.segments ? (stableAcrossSegments ? 'stabil' : 'szórt') : 'nem értékelhető', independent: false },
     { id: 'human-reference', label: 'Emberi referenciailleszkedés', status: humanComparison ? (referenceDivergence ? 'eltérő' : 'illeszkedő') : 'nincs referencia', independent: true },
-    { id: 'provenance', label: 'Provenance / vízjel', status: 'nem ellenőrzött', independent: true },
+    { id: 'provenance', label: 'Provenance / konténeradat', status: provenance?.madeWithSuno ? 'Suno-konténeradat észlelve (módosítható)' : 'nincs észlelt konténerjel', independent: true },
     { id: 'components', label: 'Stem- és komponenselemzés', status: 'nem ellenőrzött', independent: true }
   ];
   const independentSignals = [technicalSignal, referenceDivergence].filter(Boolean).length;
@@ -336,6 +366,66 @@ export function buildEvidenceTriage(analysis, humanComparison) {
       ? 'Technikai jelzés - önmagában nem bizonyíték'
       : 'Nincs erős technikai jelzés';
   return { assessment, technicalSignal, stableAcrossSegments, referenceDivergence, independentSignals, layers };
+}
+
+// A compact display-only spectrogram. It is kept separate from the verdict so
+// the visual aid cannot silently change the detector's decision.
+export function spectrogramPreview(pcm, sampleRate, { frames = 72, bands = 80 } = {}) {
+  const spectra = spectralFrames(pcm, 0, pcm.length, frames);
+  const maxFrequency = Math.min(20000, sampleRate / 2);
+  const hzPerBin = sampleRate / WINDOW_SIZE;
+  const raw = [];
+  for (const spectrum of spectra) {
+    for (let band = 0; band < bands; band += 1) {
+      const low = band * maxFrequency / bands;
+      const high = (band + 1) * maxFrequency / bands;
+      raw.push(mean(spectrum.slice(Math.max(1, Math.floor(low / hzPerBin)), Math.max(2, Math.ceil(high / hzPerBin))).map((value) => Math.log10(value + EPSILON))));
+    }
+  }
+  const low = quantile(raw, .05); const high = quantile(raw, .98);
+  return { frames, bands, maxFrequency, values: Float32Array.from(raw.map((value) => clamp((value - low) / Math.max(EPSILON, high - low)))) };
+}
+
+// Research-only descriptors: they measure spectral concentration and envelope
+// attacks, not an AI origin. Calibration requires matched human controls.
+export function spectralTransientDiagnostics(pcm, sampleRate) {
+  const frames = spectralFrames(pcm, 0, pcm.length, Math.min(16, Math.max(6, Math.floor(pcm.length / sampleRate))));
+  const concentrations = frames.map((spectrum) => {
+    const hzPerBin = sampleRate / WINDOW_SIZE;
+    const band = spectrum.slice(Math.max(1, Math.ceil(300 / hzPerBin)), Math.min(spectrum.length, Math.floor(8000 / hzPerBin)));
+    return clamp(standardDeviation(band) / (mean(band) + EPSILON));
+  });
+  const windowSize = Math.max(64, Math.floor(sampleRate * .01));
+  const envelope = [];
+  for (let offset = 0; offset + windowSize <= pcm.length; offset += windowSize) envelope.push(Math.sqrt(mean(Array.from(pcm.slice(offset, offset + windowSize), (sample) => sample ** 2))));
+  const rises = envelope.slice(1).map((value, index) => Math.max(0, value - envelope[index]));
+  return { spectralConcentration: mean(concentrations), transientSharpness: quantile(rises, .95) / (mean(rises) + EPSILON) };
+}
+
+// Input-independent measurements for a future effect-profile training set.
+// They describe the observed file; they do not identify a plugin by themselves.
+export function effectProfileFeatures(pcm, sampleRate) {
+  let peak = 0; let squared = 0; let crossings = 0;
+  for (let index = 0; index < pcm.length; index += 1) {
+    const sample = pcm[index];
+    peak = Math.max(peak, Math.abs(sample)); squared += sample ** 2;
+    if (index > 0 && (sample >= 0) !== (pcm[index - 1] >= 0)) crossings += 1;
+  }
+  const rms = Math.sqrt(squared / Math.max(1, pcm.length));
+  const windowSize = Math.max(64, Math.floor(sampleRate * 0.05));
+  const windowRms = [];
+  for (let start = 0; start + windowSize <= pcm.length; start += windowSize) {
+    let energy = 0;
+    for (let index = start; index < start + windowSize; index += 1) energy += pcm[index] ** 2;
+    windowRms.push(Math.sqrt(energy / windowSize));
+  }
+  const low = quantile(windowRms, .1); const high = quantile(windowRms, .9);
+  return {
+    rms, peak, crestDb: 20 * Math.log10((peak + EPSILON) / (rms + EPSILON)),
+    zeroCrossingsPerSecond: crossings * sampleRate / Math.max(1, pcm.length),
+    envelopeDynamicRangeDb: 20 * Math.log10((high + EPSILON) / (low + EPSILON)),
+    windowCount: windowRms.length
+  };
 }
 
 // Roadmap step 4: score every non-silent segment, then report the track-level
@@ -392,6 +482,9 @@ export function analyzePcm(pcm, sampleRate) {
   const structure = structuralDiagnostics(pcm, sampleRate);
   const residualDiagnostic = residualDiagnostics(frameSpectra, averageSpectrum, hzPerBin);
   const multifractal = multifractalDiagnostics(pcm, sampleRate);
+  const effectProfile = effectProfileFeatures(pcm, sampleRate);
+  const highFrequency = highFrequencyMarkers(averageSpectrum, hzPerBin, sampleRate);
+  const spectralTransient = spectralTransientDiagnostics(pcm, sampleRate);
   const segments = analyzeSegments(pcm, sampleRate);
   const fullEvidence = { ...evidence, 'Szerkezeti konzisztencia': structure.coherence };
   // This is a transparent baseline score, not a trained classifier. The structural diagnostic is deliberately excluded from the verdict.
@@ -411,6 +504,9 @@ export function analyzePcm(pcm, sampleRate) {
     residual: residualDiagnostic,
     residualProfile: residualProfile(averageSpectrum, hzPerBin, sampleRate),
     multifractal,
+    effectProfile,
+    highFrequency,
+    spectralTransient,
     segments,
     sampleRate,
     duration: pcm.length / sampleRate,
